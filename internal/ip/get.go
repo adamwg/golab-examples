@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-func GetIP() (net.IP, error) {
+func GetIP(getter HTTPGetter) (net.IP, error) {
 	url := "https://icanhazip.com"
-	resp, err := http.Get(url)
+	resp, err := getter.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -28,4 +28,8 @@ func GetIP() (net.IP, error) {
 	}
 
 	return ip, nil
+}
+
+type HTTPGetter interface {
+	Get(url string) (*http.Response, error)
 }
