@@ -3,6 +3,7 @@ package fileserver
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,27 +14,120 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGetPathSuccess(t *testing.T) {
+type noopReadCloser struct {
+	io.Reader
+}
+
+func (nrc *noopReadCloser) Close() error { return nil }
+
+func TestServeFileSuccess(t *testing.T) {
+	mos := &MockOS{}
+	h := &handler{
+		os: mos,
+	}
+
+	mos.On("Stat", "/tmp/foo.go").
+		Return(&fakeStat{false}, nil).
+		Once()
+	mos.On("Open", "/tmp/foo.go").
+		Return(&noopReadCloser{
+			bytes.NewBufferString("hello"),
+		}, nil).
+		Once()
+
+	w := httptest.NewRecorder()
 	u, _ := url.Parse("http://localhost:8080/foo.go")
 	req := &http.Request{
 		URL: u,
 	}
 
-	path, err := getPath(req)
+	h.serveFile(w, req)
 
-	assert.Equal(t, "/tmp/foo.go", path)
-	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "hello", w.Body.String())
 }
 
-func TestGetPathEmpty(t *testing.T) {
+func TestServeFileEmptyPath(t *testing.T) {
+	mos := &MockOS{}
+	h := &handler{
+		os: mos,
+	}
+
+	w := httptest.NewRecorder()
 	u, _ := url.Parse("http://localhost:8080/")
 	req := &http.Request{
 		URL: u,
 	}
 
-	_, err := getPath(req)
+	h.serveFile(w, req)
 
-	assert.Error(t, err)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFileDirectory(t *testing.T) {
+	mos := &MockOS{}
+	h := &handler{
+		os: mos,
+	}
+
+	mos.On("Stat", "/tmp/foo.go").
+		Return(&fakeStat{true}, nil).
+		Once()
+
+	w := httptest.NewRecorder()
+	u, _ := url.Parse("http://localhost:8080/foo.go")
+	req := &http.Request{
+		URL: u,
+	}
+
+	h.serveFile(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFileStatErrors(t *testing.T) {
+	mos := &MockOS{}
+	h := &handler{
+		os: mos,
+	}
+
+	mos.On("Stat", "/tmp/foo.go").
+		Return(nil, errors.New("oops!")).
+		Once()
+
+	w := httptest.NewRecorder()
+	u, _ := url.Parse("http://localhost:8080/foo.go")
+	req := &http.Request{
+		URL: u,
+	}
+
+	h.serveFile(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestServeFileOpenError(t *testing.T) {
+	mos := &MockOS{}
+	h := &handler{
+		os: mos,
+	}
+
+	mos.On("Stat", "/tmp/foo.go").
+		Return(&fakeStat{false}, nil).
+		Once()
+	mos.On("Open", "/tmp/foo.go").
+		Return(nil, errors.New("oops!")).
+		Once()
+
+	w := httptest.NewRecorder()
+	u, _ := url.Parse("http://localhost:8080/foo.go")
+	req := &http.Request{
+		URL: u,
+	}
+
+	h.serveFile(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestStatOK(t *testing.T) {
@@ -81,16 +175,6 @@ func TestStatOK(t *testing.T) {
 			assert.Equal(t, tc.expectedCode, code)
 		})
 	}
-}
-
-func TestRespondSuccess(t *testing.T) {
-	r := bytes.NewBufferString("hello")
-	w := httptest.NewRecorder()
-
-	respondSuccess(w, r)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "hello", w.Body.String())
 }
 
 type fakeStat struct {

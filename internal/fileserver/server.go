@@ -1,42 +1,39 @@
 package fileserver
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 )
 
-func serveFile(w http.ResponseWriter, r *http.Request) {
-	path, err := getPath(r)
-	if err != nil {
+type handler struct {
+	os OS
+}
+
+func (h *handler) serveFile(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path == "" || path == "/" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	path = filepath.Join("/tmp", path)
 
-	st, err := os.Stat(path)
+	st, err := h.os.Stat(path)
 	if code := statOK(st, err); code != http.StatusOK {
 		w.WriteHeader(code)
 		return
 	}
 
-	f, err := os.Open(path)
+	f, err := h.os.Open(path)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	defer f.Close()
 
-	respondSuccess(w, f)
-}
-
-func getPath(r *http.Request) (string, error) {
-	path := r.URL.Path
-	if path == "" || path == "/" {
-		return "", errors.New("no path in request")
-	}
-	return filepath.Join("/tmp", path), nil
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, f)
 }
 
 func statOK(st os.FileInfo, err error) int {
@@ -54,11 +51,9 @@ func statOK(st os.FileInfo, err error) int {
 	return http.StatusOK
 }
 
-func respondSuccess(w http.ResponseWriter, f io.Reader) {
-	w.WriteHeader(http.StatusOK)
-	io.Copy(w, f)
-}
-
 func NewHandler() http.Handler {
-	return http.HandlerFunc(serveFile)
+	h := &handler{
+		os: &realOS{},
+	}
+	return http.HandlerFunc(h.serveFile)
 }
